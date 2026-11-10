@@ -1,0 +1,48 @@
+name: Build downloadable packages
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/release.yml']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Check SQLite and application rules
+        working-directory: desktop
+        run: npm test
+      - name: Build Windows installer
+        working-directory: desktop
+        run: npm run build:win
+      - name: Package source and installer
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-files | Out-Null
+          git archive --format=zip --prefix=Hamrah-Mohasel-Source/ -o release-files/Hamrah-Mohasel-Source.zip HEAD
+          git archive --format=zip --prefix=Hamrah-Mohasel-Web/ -o release-files/Hamrah-Mohasel-Web.zip HEAD:web
+          git archive --format=zip -o desktop-source.zip HEAD:desktop
+          New-Item -ItemType Directory -Force package/Hamrah-Mohasel-Desktop | Out-Null
+          Expand-Archive desktop-source.zip package/Hamrah-Mohasel-Desktop
+          Copy-Item desktop/dist/Hamrah-Mohasel-Setup-1.0.0.exe package/Hamrah-Mohasel-Desktop/
+          Copy-Item Copy-To-Desktop.ps1 package/Hamrah-Mohasel-Desktop/
+          Compress-Archive package/Hamrah-Mohasel-Desktop release-files/Hamrah-Mohasel-Desktop.zip
+          Copy-Item desktop/dist/Hamrah-Mohasel-Setup-1.0.0.exe release-files/
+          Get-ChildItem release-files -File | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + '  ' + $_.Name } | Set-Content release-files/SHA256SUMS.txt
+      - name: Publish downloadable release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = (Get-ChildItem release-files -File).FullName
+          gh release upload v1.0.0 @assets --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit v1.0.0 --repo $env:GITHUB_REPOSITORY --draft=false --latest
