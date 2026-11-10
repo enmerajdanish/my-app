@@ -1,0 +1,3 @@
+const fs=require('node:fs');const path=require('node:path');const crypto=require('node:crypto');const file=path.join(__dirname,'../.env');
+if(fs.existsSync(file)){console.log('فایل .env قبلاً موجود است؛ بازنویسی نشد.');process.exit(0);}
+const desktop=require('../package.json').name.includes('desktop');const token=crypto.randomBytes(12).toString('hex');fs.writeFileSync(file,`SESSION_SECRET=${crypto.randomBytes(48).toString('hex')}\nSETUP_TOKEN=${token}\n${desktop?'DB_KIND=sqlite':'MONGODB_URI=mongodb://127.0.0.1:27017/?replicaSet=rs0\nMONGODB_DB=kunduz_courses'}\nPORT=3000\n`,{mode:0o600});console.log(`کد راه‌اندازی مدیر: ${token}\nاین کد را در صفحهٔ اولین اجرا وارد کنید.`);
