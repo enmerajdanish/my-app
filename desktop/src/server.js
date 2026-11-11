@@ -314,17 +314,22 @@ async function createApp(options = {}) {
   app.get("/api/courses/:cid/paper", async (req, res) => {
     const c = D.course(req.state, req.user, req.params.cid);
     const sessions = D.integer(
-      req.query.sessions || c.sessions,
+      req.query.days || req.query.sessions || 31,
       1,
       366,
-      "تعداد جلسات",
+      "تعداد روزها",
     );
+    const options = {
+      start: D.date(req.query.start || c.start, true),
+      fridayClosed: req.query.fridayClosed !== "false",
+    };
     if (req.query.format === "xlsx") {
       const b = await Paper.paperWorkbook(
         req.state,
         c,
         sessions,
         req.query.lang === "ps" ? "ps" : "fa",
+        options,
       );
       res
         .set({
@@ -342,6 +347,7 @@ async function createApp(options = {}) {
             c,
             sessions,
             req.query.lang === "ps" ? "ps" : "fa",
+            options,
           ),
         );
   });

@@ -291,8 +291,9 @@ function studentList(c) {
 }
 function attendance(c) {
   const count = studentsFor(c.id).length;
-  return `<div class="panelhead"><h2>حاضری قلمی</h2><span class="muted">${num(count)} محصل ثبت‌شده</span></div><p class="sub">فورم از فهرست ثبت‌نام ساخته می‌شود. ستون‌های مشخصات فقط شماره، اسم و ولد است؛ خانه‌های جلسات برای حاضری قلمی خالی می‌ماند.</p><div class="toolbar"><label for="paperSessions">تعداد ستون‌های جلسات</label><input id="paperSessions" class="form-control" type="number" min="1" max="366" value="${Math.min(c.sessions, 366)}">${button("باز کردن فورم چاپی", "blankAttendance", "", "btn-primary")}${button("دریافت Excel حاضری خالی", "paperExcel")}</div><hr><div class="panelhead"><h2>نتایج نهایی حاضری</h2>${admin() ? button("وارد کردن نتایج از Excel", "resultsImport", "", "btn-primary") : ""}</div><p class="sub">نتایج حاضری قلمی را در فایل Excel درج و سپس وارد کنید. صدور تصدیق‌نامه فقط بر اساس نتایج معتبر واردشده انجام می‌شود.</p>${admin() ? `<a class="btn btn-outline-primary mb-3" href="/api/courses/${c.id}/results/template?lang=${language()}">دریافت قالب نتایج</a>` : ""}${resultsTable(c)}`;
+  return `<div class="panelhead"><h2>حاضری قلمی</h2><span class="muted">${num(count)} محصل ثبت‌شده</span></div><p class="sub">حاضری مطابق نمونهٔ شما با تاریخ، روزهای هفته و ستون‌های مجموع حاضر و غیرحاضر ساخته می‌شود. خانه‌های حاضری برای نوشتن با قلم خالی می‌ماند.</p><div class="toolbar"><label for="paperStart">تاریخ شروع فورم (میلادی)</label><input id="paperStart" class="form-control" type="date" value="${c.start}"><label for="paperDays">تعداد روزهای فورم</label><input id="paperDays" class="form-control" type="number" min="1" max="366" value="31"><label><input id="fridayClosed" type="checkbox" checked> جمعه تعطیل است</label>${button("باز کردن فورم چاپی", "blankAttendance", "", "btn-primary")}${button("دریافت Excel حاضری خالی", "paperExcel")}</div><hr><div class="panelhead"><h2>نتایج نهایی حاضری</h2>${admin() ? button("وارد کردن نتایج از Excel", "resultsImport", "", "btn-primary") : ""}</div><p class="sub">تعداد جلسات ثابت نیست؛ از ستون جلسات یا مجموع معتبر حاضر و غیرحاضر در فایل نتایج خوانده می‌شود.</p>${admin() ? `<a class="btn btn-outline-primary mb-3" href="/api/courses/${c.id}/results/template?lang=${language()}">دریافت قالب نتایج</a>` : ""}${resultsTable(c)}`;
 }
+
 function getReport(cid) {
   return studentsFor(cid).map((s) => {
     const r = (state.attendanceResults || []).find(
@@ -327,7 +328,7 @@ function reports(c) {
 }
 function certificates(c) {
   const rows = getReport(c.id);
-  return `<div class="panelhead"><h2>تصدیق‌نامهٔ Word</h2>${button("صدور برای تمام واجدین شرایط", "issueAll", "", "btn-primary")}</div><p class="sub">کورس باید تکمیل‌شده باشد. نتایج معتبر واردشده و غیرحاضری کمتر از ${num(state.settings[0].absenceLimit)} روز ضروری است. خروجی Word در اندازهٔ A4 افقی آماده می‌شود.</p>${table(
+  return `<div class="panelhead"><h2>تصدیق‌نامهٔ Word</h2>${button("صدور برای تمام واجدین شرایط", "issueAll", "", "btn-primary")}</div><p class="sub">کورس باید تکمیل‌شده باشد. نتایج معتبر واردشده و غیرحاضری کمتر از ${num(state.settings[0].absenceLimit)} روز ضروری است. قالب Word مطابق فایل شما در A4 افقی است؛ شمارهٔ ثبت برای نوشتن دستی خالی می‌ماند.</p>${table(
     ["اسم", "ولد", "غیرحاضری", "وضعیت", "عملیات"],
     rows.map((r) => {
       const cert = state.certificates.find(
@@ -342,7 +343,7 @@ function certificates(c) {
           : `<span class="muted">${r.source === "none" ? "نتیجه وارد نشده" : "غیرواجد شرایط"}</span>`,
         r.eligible
           ? cert
-            ? `<a class="btn btn-outline-primary" href="/api/certificates/word?ids=${cert.id}&lang=${language()}">دریافت Word</a><small class="d-block">${esc(cert.number)}</small>`
+            ? `<a class="btn btn-outline-primary" href="/api/certificates/word?ids=${cert.id}&lang=${language()}">دریافت Word</a><small class="d-block">شمارهٔ ثبت در Word خالی است.</small>`
             : button("صدور", "issueOne", r.id)
           : "—",
       ];
@@ -680,11 +681,8 @@ function account() {
   );
 }
 function blankAttendance() {
-  const sessions = paperSessions();
-  window.open(
-    `/api/courses/${selectedCourse}/paper?sessions=${sessions}&lang=${language()}`,
-    "_blank",
-  );
+  const query = paperQuery();
+  window.open(`/api/courses/${selectedCourse}/paper?${query}`, "_blank");
 }
 async function action(name, id, el) {
   switch (name) {
@@ -757,7 +755,7 @@ async function action(name, id, el) {
       blankAttendance();
       break;
     case "paperExcel":
-      window.location.href = `/api/courses/${selectedCourse}/paper?format=xlsx&sessions=${paperSessions()}&lang=${language()}`;
+      window.location.href = `/api/courses/${selectedCourse}/paper?format=xlsx&${paperQuery()}`;
       break;
     case "resultsImport":
       resultsImport();
@@ -961,6 +959,7 @@ document.addEventListener("submit", async (e) => {
         body: data,
       });
       resultRows = preview.rows;
+      resultProfile = preview.profile || "";
       showResults();
     } else if (f.id === "importPreview") {
       const data = new FormData();
@@ -990,7 +989,8 @@ document.addEventListener("submit", async (e) => {
   }
 });
 let resultRows = [],
-  resultSessions = 0;
+  resultSessions = 0,
+  resultProfile = "";
 function resultsTable(c) {
   return table(
     [
@@ -1021,19 +1021,25 @@ function resultsTable(c) {
     ]),
   );
 }
-function paperSessions() {
-  const n = Number(
-    $("#paperSessions")?.value ||
-      state.courses.find((c) => c.id === selectedCourse).sessions,
-  );
-  if (!Number.isInteger(n) || n < 1 || n > 366)
-    throw new Error(tr("تعداد جلسات باید بین ۱ و ۳۶۶ باشد."));
-  return n;
+function paperQuery() {
+  const days = Number($("#paperDays")?.value || 31);
+  if (!Number.isInteger(days) || days < 1 || days > 366)
+    throw new Error(tr("تعداد روزها باید بین ۱ و ۳۶۶ باشد."));
+  const start =
+    $("#paperStart")?.value ||
+    state.courses.find((c) => c.id === selectedCourse).start;
+  return new URLSearchParams({
+    days: String(days),
+    start,
+    fridayClosed: String($("#fridayClosed")?.checked !== false),
+    lang: language(),
+  }).toString();
 }
+
 function resultsImport() {
   const c = state.courses.find((c) => c.id === selectedCourse);
   openModal(
-    `<h2>وارد کردن نتایج حاضری</h2><p class="sub">فایل باید اسم، ولد و غیرحاضری تمام محصلین کورس را داشته باشد. تعداد جلسات را تأیید کنید؛ نتیجهٔ خالی به معنی صفر غیرحاضری نیست.</p><form id="resultsPreview"><div class="formgrid"><div><label class="form-label">تعداد کل جلسات برگزارشده</label><input name="totalSessions" type="number" class="form-control" min="1" max="10000" value="${c.sessions}" required></div><div><label class="form-label">فایل نتایج Excel</label><input class="form-control" name="file" type="file" accept=".xlsx" required></div></div><details class="mt-3"><summary>تنظیم دستی ستون‌ها (اختیاری)</summary><p class="sub">برای شناسایی خودکار خالی بگذارید. شمارهٔ ستون‌ها: A=1 و B=2. برای فایل روزانه، شروع و ختم ستون‌های روزها را تعیین کنید؛ علامت‌های ح، غ و ر پشتیبانی می‌شوند.</p><div class="formgrid">${fields(
+    `<h2>وارد کردن نتایج حاضری</h2><p class="sub">فایل باید اسم، ولد و غیرحاضری تمام محصلین کورس را داشته باشد. اگر حاضر و غیرحاضر موجود باشد، تعداد جلسات از مجموع آن‌ها خوانده می‌شود؛ در غیر آن عدد زیر استفاده می‌شود.</p><form id="resultsPreview"><div class="formgrid"><div><label class="form-label">جلسات برای فایل بدون مجموع (داینامیک)</label><input name="totalSessions" type="number" class="form-control" min="1" max="10000" value="${c.sessions}" required></div><div><label class="form-label">فایل نتایج Excel</label><input class="form-control" name="file" type="file" accept=".xlsx" required></div></div><details class="mt-3"><summary>تنظیم دستی ستون‌ها (اختیاری)</summary><p class="sub">برای شناسایی خودکار خالی بگذارید. شمارهٔ ستون‌ها: A=1 و B=2. برای فایل روزانه، شروع و ختم ستون‌های روزها را تعیین کنید؛ علامت‌های ح، غ و ر پشتیبانی می‌شوند.</p><div class="formgrid">${fields(
       [
         ["headerRow", "شماره سطر عنوان‌ها", "number"],
         ["name", "اسم", "number"],
@@ -1054,7 +1060,7 @@ function resultsImport() {
 }
 function showResults() {
   openModal(
-    `<h2>بررسی نتایج حاضری</h2><p class="sub">تمام محصلین کورس باید در فایل موجود باشند. خطاها را اصلاح کنید؛ نتیجهٔ نهایی هنگام ثبت دوباره بررسی می‌شود. تا رفع تمام خطاها هیچ نتیجه‌ای ذخیره نمی‌شود.</p><div style="max-height:55vh;overflow:auto">${table(
+    `<h2>بررسی نتایج حاضری</h2>${resultProfile === "kunduz-calendar" ? `<p class="sub">${tr("در قالب نمونهٔ حاضری: a حاضر و r غیرحاضر است؛ جمعه‌های مشخص‌شده تعطیل‌اند.")}</p>` : ""}<p class="sub">تمام محصلین کورس باید در فایل موجود باشند. خطاها را اصلاح کنید؛ نتیجهٔ نهایی هنگام ثبت دوباره بررسی می‌شود. تا رفع تمام خطاها هیچ نتیجه‌ای ذخیره نمی‌شود.</p><div style="max-height:55vh;overflow:auto">${table(
       ["سطر", "اسم", "ولد", "جلسات", "حاضر", "غیرحاضر", "رخصت", "بررسی اولیه"],
       resultRows.map((r, i) => [
         num(r.sourceRow),

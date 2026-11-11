@@ -1,6 +1,6 @@
 {
   "name": "kunduz-course-desktop",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "سیستم مدیریت کورس‌های پوهنتون کندوز",
   "main": "electron/main.js",
@@ -19,21 +19,19 @@
     "@fontsource/vazirmatn": "^5.2.8",
     "bcryptjs": "^3.0.2",
     "bootstrap": "^5.3.8",
-    "docx": "^9.15.3",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-rate-limit": "^8.0.1",
     "express-session": "^1.18.2",
     "helmet": "^8.1.0",
+    "jszip": "^3.10.1",
     "mongodb": "^6.20.0",
-    "multer": "^2.0.2",
-    "sharp": "^0.35.5"
+    "multer": "^2.0.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
     "electron": "^41.0.0",
     "electron-builder": "^26.0.0",
-    "jszip": "^3.10.1",
     "supertest": "^7.1.4"
   },
   "build": {
@@ -44,7 +42,8 @@
       "src/**/*",
       "public/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "templates/**/*"
     ],
     "directories": {
       "output": "dist"

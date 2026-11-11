@@ -158,11 +158,73 @@ async function parse(buffer, mapping = {}) {
   if (!columns.name || !columns.father)
     D.fail("ستون‌های اسم و ولد پیدا نشد؛ شماره ستون‌ها را دستی مشخص کنید.");
   const daily = [];
+  const dateColumns = [];
+  if (headerRow > 1)
+    sheet.getRow(headerRow - 1).eachCell((cell, i) => {
+      if (
+        !Object.values(columns).includes(i) &&
+        /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/.test(digits(cellText(cell)))
+      )
+        dateColumns.push(i);
+    });
+  const knownDays = [
+    "شنبه",
+    "یکشنبه",
+    "دوشنبه",
+    "سه شنبه",
+    "سه‌شنبه",
+    "چهارشنبه",
+    "پنجشنبه",
+    "جمعه",
+    "جمعه‌",
+  ];
+  const calendarLayout =
+    dateColumns.length >= 5 &&
+    dateColumns.every((i) =>
+      knownDays.includes(cellText(sheet.getCell(headerRow, i))),
+    );
+  const countif = (col, marker) => {
+    let found = false;
+    if (col)
+      sheet.eachRow((row, n) => {
+        const formula = row.getCell(col).value?.formula;
+        if (
+          n > headerRow &&
+          typeof formula === "string" &&
+          new RegExp(
+            'COUNTIF\\([^,;]+[,;]\\s*"' + marker + '"\\s*\\)',
+            "i",
+          ).test(formula)
+        )
+          found = true;
+      });
+    return found;
+  };
+  const calendarProfile =
+    calendarLayout &&
+    countif(columns.present, "a") &&
+    countif(columns.absent, "r");
+  const holidayColumns = calendarProfile
+    ? dateColumns.filter(
+        (i) =>
+          D.normalize(cellText(sheet.getCell(headerRow, i))) === "جمعه" &&
+          ["FFFF0000", "FFD8DDD8", "FF000000"].includes(
+            (
+              sheet.getCell(headerRow, i).fill?.fgColor?.argb || ""
+            ).toUpperCase(),
+          ),
+      )
+    : [];
+  const hasExplicitDaily = Boolean(mapping.dailyStart && mapping.dailyEnd);
+  if (calendarProfile && !hasExplicitDaily) {
+    for (const i of dateColumns) if (!holidayColumns.includes(i)) daily.push(i);
+  }
+
   if (mapping.dailyStart && mapping.dailyEnd) {
     const start = D.integer(mapping.dailyStart, 1, 1100, "شروع ستون روزها"),
       end = D.integer(mapping.dailyEnd, start, 1100, "ختم ستون روزها");
     for (let i = start; i <= end; i++) daily.push(i);
-  } else if (!columns.absent) {
+  } else if (!columns.absent && !daily.length) {
     sheet.getRow(headerRow).eachCell((cell, i) => {
       const value = digits(cellText(cell));
       if (
@@ -202,6 +264,12 @@ async function parse(buffer, mapping = {}) {
     l: "leave",
     leave: "leave",
   };
+  if (calendarProfile) {
+    marks.a = "present";
+    marks.r = "absent";
+    marks.l = "leave";
+  }
+  const inferredSessionTotals = new Set();
   const rows = [];
   sheet.eachRow((row, n) => {
     if (n <= headerRow) return;
@@ -210,6 +278,13 @@ async function parse(buffer, mapping = {}) {
       r[k] = cellText(row.getCell(col));
     if (!r.name && !r.father) return;
     if (daily.length) {
+      if (
+        holidayColumns.some(
+          (i) => !daily.includes(i) && cellText(row.getCell(i)),
+        )
+      )
+        r.parseError =
+          "روز تعطیل دارای علامت حاضری است؛ وضعیت روز را اصلاح کنید.";
       r.sessions = daily.length;
       r.present = r.absent = r.leave = 0;
       for (const i of daily) {
@@ -223,6 +298,24 @@ async function parse(buffer, mapping = {}) {
         r[mark]++;
       }
     }
+    if (
+      !daily.length &&
+      !columns.sessions &&
+      r.present !== "" &&
+      r.present != null &&
+      r.absent !== "" &&
+      r.absent != null
+    ) {
+      try {
+        r.sessions =
+          count(r.present, "حاضر") +
+          count(r.absent, "غیرحاضر") +
+          (count(r.leave, "رخصت", false) || 0);
+        inferredSessionTotals.add(r.sessions);
+      } catch (e) {
+        r.parseError = e.message;
+      }
+    }
     rows.push(r);
   });
   return {
@@ -231,6 +324,15 @@ async function parse(buffer, mapping = {}) {
     headerRow,
     mode: daily.length ? "daily" : "summary",
     dailyColumns: daily,
+    profile: calendarProfile
+      ? "kunduz-calendar"
+      : daily.length
+        ? "generic-daily"
+        : "final-summary",
+    inferredSessionTotals: [...inferredSessionTotals],
+    excludedHolidayColumns: calendarProfile
+      ? dateColumns.filter((i) => !daily.includes(i))
+      : [],
   };
 }
 async function template(s, c, lang = "fa") {
@@ -256,125 +358,13 @@ async function template(s, c, lang = "fa") {
   });
   return wb.xlsx.writeBuffer();
 }
-async function paperWorkbook(s, c, sessions, lang = "fa") {
-  const wb = new ExcelJS.Workbook();
-  const students = s.enrollments
-    .filter((e) => e.courseId === c.id)
-    .map((e) => s.students.find((st) => st.id === e.studentId));
-  for (let start = 1; start <= sessions; start += 15) {
-    const end = Math.min(sessions, start + 14);
-    const days = Array.from({ length: end - start + 1 }, (_, i) => start + i);
-    const sh = wb.addWorksheet("حاضری " + start + "-" + end, {
-      views: [{ rightToLeft: true }],
-      pageSetup: {
-        paperSize: 9,
-        orientation: "landscape",
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-      },
-    });
-    sh.mergeCells(1, 1, 1, 3 + days.length);
-    sh.getCell("A1").value =
-      s.settings[0].university + " — " + s.settings[0].office;
-    sh.mergeCells(2, 1, 2, 3 + days.length);
-    sh.getCell("A2").value =
-      c.name +
-      " | استاد: " +
-      (s.users.find((u) => u.id === c.teacherId)?.name || "") +
-      " | تاریخ: __________";
-    sh.addRow(["شماره", "اسم", "ولد", ...days.map((d) => "جلسه " + d)]);
-    students.forEach((st, i) =>
-      sh.addRow([i + 1, st.name, st.father, ...days.map(() => "")]),
-    );
-    sh.columns.forEach((col, i) => (col.width = i === 0 ? 7 : i < 3 ? 24 : 5));
-    sh.eachRow((row, n) => {
-      row.height = n <= 3 ? 28 : 30;
-      for (let i = 1; i <= 3 + days.length; i++) {
-        const cell = row.getCell(i);
-        cell.font = { name: "Arial", size: 11, bold: n <= 3 };
-        cell.alignment = { horizontal: "center", vertical: "middle" };
-        cell.border = {
-          top: { style: "thin" },
-          bottom: { style: "thin" },
-          left: { style: "thin" },
-          right: { style: "thin" },
-        };
-      }
-    });
-    sh.pageSetup.printTitlesRow = "1:3";
-    sh.eachRow((row, n) => {
-      if (n <= 3)
-        row.eachCell((cell) => {
-          if (typeof cell.value === "string")
-            cell.value = translate(cell.value, lang);
-        });
-    });
-  }
-  return wb.xlsx.writeBuffer();
-}
-const esc = (v) =>
-  String(v ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
-        c
-      ],
-  );
-function paperHTML(s, c, sessions, lang = "fa") {
-  const ps = lang === "ps";
-  const text = ps
-    ? {
-        title: "د حاضري پاڼه",
-        number: "شمېره",
-        name: "نوم",
-        father: "د پلار نوم",
-        date: "نېټه",
-        instructor: "استاد",
-        session: "ناسته",
-        print: "چاپ",
-        note: "حاضري په قلم ولیکئ. د ناستو د نېټو لپاره پورته تش ځایونه وکاروئ.",
-      }
-    : {
-        title: "فورم حاضری قلمی",
-        number: "شماره",
-        name: "اسم",
-        father: "ولد",
-        date: "تاریخ",
-        instructor: "استاد",
-        session: "جلسه",
-        print: "چاپ",
-        note: "حاضری را با قلم درج کنید. تاریخ هر جلسه در خانهٔ خالی بالای آن نوشته شود.",
-      };
-  const students = s.enrollments
-    .filter((e) => e.courseId === c.id)
-    .map((e) => s.students.find((st) => st.id === e.studentId));
-  const pages = [];
-  for (let start = 1; start <= sessions; start += 15)
-    for (let offset = 0; offset < students.length; offset += 20) {
-      const days = Array.from(
-        { length: Math.min(15, sessions - start + 1) },
-        (_, i) => start + i,
-      );
-      pages.push(
-        `<article><header><img src="/assets/logo1.jpg"><div><b>${esc(s.settings[0].university)}</b><br>${esc(s.settings[0].office)}<h2>${text.title} — ${esc(c.name)}</h2>${text.instructor}: ${esc(s.users.find((u) => u.id === c.teacherId)?.name)} · ${esc(c.days)} · ${esc(c.startTime)} — ${esc(c.endTime)}</div><img src="/assets/logo2.jpg"></header><table><thead><tr><th rowspan="2">${text.number}</th><th rowspan="2" class="name">${text.name}</th><th rowspan="2" class="name">${text.father}</th>${days.map((d) => `<th>${text.session}<br>${d}</th>`).join("")}</tr><tr>${days.map(() => '<th class="date">____<br>____</th>').join("")}</tr></thead><tbody>${students
-          .slice(offset, offset + 20)
-          .map(
-            (st, i) =>
-              `<tr><td>${offset + i + 1}</td><td>${esc(st.name)}</td><td>${esc(st.father)}</td>${days.map(() => "<td></td>").join("")}</tr>`,
-          )
-          .join(
-            "",
-          )}</tbody></table><footer>${text.note}<span>${offset + 1} — ${Math.min(students.length, offset + 20)} / ${students.length}</span></footer></article>`,
-      );
-    }
-  return `<!doctype html><html lang="${lang}" dir="rtl"><meta charset="utf-8"><title>${text.title}</title><link href="/assets/fonts.css" rel="stylesheet"><style>@page{size:A4 landscape;margin:9mm}*{box-sizing:border-box}body{font-family:Vazirmatn,Arial;background:#eee;margin:0}button{margin:15px;padding:10px 24px}article{width:279mm;min-height:190mm;padding:4mm;background:white;margin:10px auto;break-after:page}header{display:flex;justify-content:space-between;align-items:center;text-align:center;font-size:11px;margin-bottom:12px}header img{width:62px;height:62px;object-fit:contain}h2{margin:5px;font-size:17px}table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:10px;text-align:center}th,td{border:1px solid #555;padding:3px}th:first-child{width:32px}.name{width:120px}.date{height:34px;font-size:8px}tbody td{height:23px}footer{font-size:9px;margin-top:10px;display:flex;justify-content:space-between}@media print{button{display:none}body{background:white}article{margin:0;padding:0;min-height:0}article:last-child{break-after:auto}}</style><button onclick="print()">${text.print}</button>${pages.join("")}</html>`;
-}
+const { daysFor, paperWorkbook, paperHTML } = require("./calendar-attendance");
 module.exports = {
   parse,
   analyze,
   counts,
   template,
+  daysFor,
   paperWorkbook,
   paperHTML,
   digits,

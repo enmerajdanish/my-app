@@ -209,7 +209,7 @@ test("حاضری کاغذی، نتایج معتبر و تصدیق‌نامه Wor
   assert.ok(!xml.includes("محصل دوم"));
   assert.ok(
     Object.keys(zip.files).filter((k) => k.startsWith("word/media/")).length >=
-      3,
+      2,
   );
   const ps = await binary(
     agent,
@@ -220,7 +220,7 @@ test("حاضری کاغذی، نتایج معتبر و تصدیق‌نامه Wor
   )
     .file("word/document.xml")
     .async("string");
-  assert.match(psXml, /تصدیق‌پاڼه/);
+  assert.match(psXml.replace(/<[^>]+>/g, ""), /تائید پاڼه/);
   const ta = request.agent(f.app);
   const token = (await ta.get("/api/session")).body.csrf;
   const teacherLogin = await ta
@@ -314,4 +314,138 @@ test("ارتقای دیتابیس قدیمی و بازیابی پشتیبان ن
   assert.equal(state.students.length, 2);
   assert.equal(state.users.length, 2);
   assert.deepEqual(state.attendanceResults, []);
+});
+
+test("حفظ قالب اصلی Word و هر دو لوگو، شماره ثبت خالی و صدور چندصفحه‌ای", async () => {
+  const Word = require("../src/certificates-word");
+  const base = await JSZip.loadAsync(
+    fs.readFileSync(path.join(__dirname, "../templates/certificate.docx")),
+  );
+  const original = await base.file("word/document.xml").async("string");
+  const row = {
+    number: "KU-DO-NOT-PRINT-123456789",
+    studentName: "نام نمونه & $& الف",
+    father: "پدر نمونه",
+    courseName: "ICDL",
+    start: "2026-08-23",
+    end: "2026-11-12",
+    issued: "2026-11-12",
+  };
+  const zip = await JSZip.loadAsync(await Word.build([row], {}));
+  const xml = await zip.file("word/document.xml").async("string");
+  const strip = (s) => s.replace(/(<w:t\b[^>]*>)[\s\S]*?<\/w:t>/g, "$1</w:t>");
+  assert.equal(
+    strip(xml),
+    strip(original),
+    "تمام موقعیت‌ها، کادرها، فونت‌ها و ساختار قالب باید یکسان بماند",
+  );
+  for (const name of [
+    "word/styles.xml",
+    "word/theme/theme1.xml",
+    "word/media/image1.jpg",
+    "word/media/image2.jpg",
+  ])
+    assert.deepEqual(
+      await zip.file(name).async("nodebuffer"),
+      await base.file(name).async("nodebuffer"),
+    );
+  const boxes = [
+    ...xml.matchAll(/<w:txbxContent\b[^>]*>[\s\S]*?<\/w:txbxContent>/g),
+  ].map((m) => m[0].replace(/<[^>]+>/g, ""));
+  const registration = boxes.filter((t) => t.startsWith("د ثبت "));
+  assert.equal(registration.length, 2);
+  registration.forEach((t) => {
+    assert.ok(!/[0-9۰-۹]/.test(t));
+    assert.ok(!t.includes("عـ"));
+  });
+  assert.ok(!xml.includes(row.number));
+  assert.ok(xml.includes("نام نمونه &amp; $&amp; الف"));
+  assert.ok(!/\{[A-Z_]+\}/.test(xml));
+  const batch = await JSZip.loadAsync(
+    await Word.build(
+      [row, { ...row, studentName: "محصل دوم", father: "پدر دوم" }],
+      {},
+    ),
+  );
+  const multi = await batch.file("word/document.xml").async("string");
+  assert.equal((multi.match(/<w:pageBreakBefore\/>/g) || []).length, 1);
+  assert.equal((multi.match(/<w:pgSz\b/g) || []).length, 1);
+  assert.match(multi, /محصل دوم/);
+  const ids = [...multi.matchAll(/<wp:docPr\b[^>]*\bid="(\d+)"/g)].map(
+    (m) => m[1],
+  );
+  assert.equal(new Set(ids).size, ids.length);
+});
+test("فورم حاضری مطابق نمونه: تاریخ و روزها، جمعه سرخ، ۳۱ ستون و روزهای داینامیک", async () => {
+  const c = {
+    id: "c",
+    name: "ICDL",
+    teacherId: "t",
+    start: "2026-03-21",
+    end: "2026-06-01",
+  };
+  const state = {
+    users: [{ id: "t", name: "استاد نمونه" }],
+    settings: [{ absenceLimit: 10 }],
+    students: [{ id: "s", name: "محصل نمونه", father: "پدر نمونه" }],
+    enrollments: [{ courseId: "c", studentId: "s" }],
+  };
+  const w = new ExcelJS.Workbook();
+  await w.xlsx.load(await Paper.paperWorkbook(state, c, 40));
+  assert.equal(w.worksheets.length, 2);
+  const sh = w.worksheets[0];
+  assert.equal(sh.getCell("E2").value, "1405/1/1");
+  assert.equal(sh.getCell("E3").value, "شنبه");
+  assert.equal(sh.getCell("K3").value, "جمعه");
+  assert.equal(sh.getCell("K2").fill.fgColor.argb, "FFFF0000");
+  assert.equal(sh.getCell("AF2").value, "1405/1/28");
+  assert.equal(sh.getCell("B4").value, "محصل نمونه");
+  assert.equal(sh.getCell("E4").value, null);
+  assert.ok(sh.getCell("AJ4").value.formula.includes('"a"'));
+  assert.ok(sh.getCell("AK4").value.formula.includes('"r"'));
+  assert.equal(sh.getCell("B4").font.name, "B Nazanin");
+  assert.equal(sh.getCell("E4").font.name, "Webdings");
+  assert.equal(w.worksheets[1].getCell("E2").value, "1405/2/1");
+  assert.equal(w.worksheets[1].getCell("N2").value, null);
+  const html = Paper.paperHTML(state, c, 40);
+  assert.equal((html.match(/<article>/g) || []).length, 2);
+  assert.match(html, /1405\/1\/28/);
+  assert.ok(!html.includes("شماره تماس"));
+  assert.match(html, /جمعه/);
+  const daily = new ExcelJS.Workbook();
+  await daily.xlsx.load(await Paper.paperWorkbook(state, c, 31));
+  const ds = daily.worksheets[0];
+  for (let col = 5; col <= 35; col++)
+    if (ds.getCell(3, col).value !== "جمعه") ds.getCell(4, col).value = "a";
+  ds.getCell("F4").value = "r";
+  const parsed = await Paper.parse(await daily.xlsx.writeBuffer());
+  assert.equal(parsed.profile, "kunduz-calendar");
+  assert.equal(parsed.rows[0].sessions, 27);
+  assert.equal(parsed.rows[0].present, 26);
+  assert.equal(parsed.rows[0].absent, 1);
+  assert.equal(parsed.excludedHolidayColumns.length, 4);
+  ds.getCell("G4").value = "ar";
+  const bad = await Paper.parse(await daily.xlsx.writeBuffer());
+  assert.ok(bad.rows[0].parseError);
+  assert.equal(Paper.analyze(state, "c", bad.rows, 27)[0].eligible, false);
+});
+test("تعداد جلسات در فایل پنج‌ستونی داینامیک است و به ۴۰ محدود نیست", async () => {
+  for (const total of [12, 27, 40, 65]) {
+    const w = new ExcelJS.Workbook();
+    const sh = w.addWorksheet("نتایج");
+    sh.mergeCells("A1:E2");
+    sh.getCell("A1").value = "نتایج نهایی حاضری";
+    sh.getRow(3).values = ["شماره", "اسم", "ولد", "حاضر", "غیر حاضر"];
+    sh.addRow([1, "محصل نمونه", "پدر نمونه", total - 9, 9]);
+    const parsed = await Paper.parse(await w.xlsx.writeBuffer());
+    assert.equal(parsed.headerRow, 3);
+    assert.equal(parsed.rows[0].sessions, total);
+    assert.deepEqual(parsed.inferredSessionTotals, [total]);
+    assert.deepEqual(Paper.counts(parsed.rows[0], 999), {
+      sessions: total,
+      present: total - 9,
+      absent: 9,
+      leave: 0,
+    });
+  }
 });
