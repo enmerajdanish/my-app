@@ -1,0 +1,74 @@
+name: Build desktop update
+on:
+  workflow_dispatch:
+  push:
+    tags: ['desktop-v*']
+permissions:
+  contents: write
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Read desktop version
+        shell: pwsh
+        run: |
+          $version = (Get-Content desktop/package.json | ConvertFrom-Json).version
+          "VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_TAG=desktop-v$version" >> $env:GITHUB_ENV
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+      - name: Check desktop behavior and migration
+        working-directory: desktop
+        run: npm test
+      - name: Build Windows installer with application icon
+        working-directory: desktop
+        run: npm run build:win
+      - name: Verify executable uses the new green and gold icon
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $exe = (Resolve-Path 'desktop/dist/win-unpacked/Hamrah Mohasel.exe').Path
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+          $bitmap = $icon.ToBitmap()
+          $green = 0L; $blue = 0L
+          for ($x=0; $x -lt $bitmap.Width; $x++) { for ($y=0; $y -lt $bitmap.Height; $y++) { $pixel = $bitmap.GetPixel($x,$y); if ($pixel.A -gt 0) { $green += $pixel.G; $blue += $pixel.B } } }
+          $bitmap.Dispose(); $icon.Dispose()
+          if ($green -le ($blue * 1.1)) { throw 'The executable does not contain the expected new application icon.' }
+          Write-Host 'Custom green and gold executable icon verified.'
+      - name: Package only desktop files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-files | Out-Null
+          git archive --format=zip --prefix=Hamrah-Mohasel-Desktop-Source/ -o release-files/Hamrah-Mohasel-Desktop-Source.zip HEAD:desktop
+          git archive --format=zip -o desktop-source.zip HEAD:desktop
+          New-Item -ItemType Directory -Force package/Hamrah-Mohasel-Desktop | Out-Null
+          Expand-Archive desktop-source.zip package/Hamrah-Mohasel-Desktop
+          $installer = "Hamrah-Mohasel-Setup-$env:VERSION.exe"
+          Copy-Item "desktop/dist/$installer" package/Hamrah-Mohasel-Desktop/
+          Copy-Item Copy-To-Desktop.ps1 package/Hamrah-Mohasel-Desktop/
+          Compress-Archive package/Hamrah-Mohasel-Desktop release-files/Hamrah-Mohasel-Desktop.zip
+          Copy-Item "desktop/dist/$installer" release-files/
+          Copy-Item desktop/samples/sample-certificate.docx release-files/
+          Get-ChildItem release-files -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + '  ' + $_.Name } | Set-Content release-files/SHA256SUMS.txt -Encoding utf8
+      - name: Publish separate desktop release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --draft --latest=false --title "همراه محصل $env:VERSION — دسکتاپ" --notes-file desktop/RELEASE-NOTES.fa.md
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $assets = (Get-ChildItem release-files -File).FullName
+          gh release upload $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --draft=false --latest=false

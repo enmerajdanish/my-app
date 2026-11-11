@@ -1,6 +1,6 @@
 {
   "name": "kunduz-course-desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "سیستم مدیریت کورس‌های پوهنتون کندوز",
   "main": "electron/main.js",
@@ -16,22 +16,25 @@
     "build:linux": "electron-builder --linux dir"
   },
   "dependencies": {
+    "@fontsource/vazirmatn": "^5.2.8",
+    "bcryptjs": "^3.0.2",
+    "bootstrap": "^5.3.8",
+    "docx": "^9.15.3",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.0.1",
     "express-session": "^1.18.2",
     "helmet": "^8.1.0",
-    "express-rate-limit": "^8.0.1",
-    "bcryptjs": "^3.0.2",
-    "exceljs": "^4.4.0",
-    "multer": "^2.0.2",
     "mongodb": "^6.20.0",
-    "bootstrap": "^5.3.8",
-    "@fontsource/vazirmatn": "^5.2.8"
+    "multer": "^2.0.2",
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "supertest": "^7.1.4",
     "@playwright/test": "^1.56.0",
     "electron": "^41.0.0",
-    "electron-builder": "^26.0.0"
+    "electron-builder": "^26.0.0",
+    "jszip": "^3.10.1",
+    "supertest": "^7.1.4"
   },
   "build": {
     "appId": "af.edu.kunduz.courses",
@@ -48,7 +51,8 @@
     },
     "win": {
       "target": "nsis",
-      "signAndEditExecutable": false
+      "signExecutable": false,
+      "icon": "public/assets/app-icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -60,7 +64,9 @@
       "script": "electron/installer.nsi",
       "installerLanguages": [
         "fa_IR"
-      ]
+      ],
+      "installerIcon": "public/assets/app-icon.ico",
+      "uninstallerIcon": "public/assets/app-icon.ico"
     },
     "publish": []
   },

@@ -1,17 +1,104 @@
-const ExcelJS=require('exceljs');
-const {normalize,fail}=require('./domain');
-const headers={name:'اسم',father:'ولد',department:'دیپارتمنت',faculty:'پوهنځی',semester:'سمستر',province:'ولایت',phone:'شماره تماس',notes:'ملاحظات',card:'شماره کارت محصلی'};
-const cellText=c=>c.value==null?'':String(c.text||'').trim();
-async function preview(buffer,mapping){
- const wb=new ExcelJS.Workbook();await wb.xlsx.load(buffer);const sheet=wb.worksheets[0];if(!sheet)fail('فایل خالی است.');if(sheet.rowCount>10000)fail('حداکثر ۱۰۰۰۰ سطر در یک فایل مجاز است.');
- let headerRow=0,columns={};
- if(mapping){for(const k of Object.keys(headers))if(mapping[k])columns[k]=Number(mapping[k]);headerRow=Number(mapping.headerRow)||3;}
- else sheet.eachRow((row,n)=>{if(headerRow||n>30)return;const cells=[];row.eachCell((c,i)=>cells.push([normalize(cellText(c)),i]));if(cells.some(([v])=>v==='اسم')&&cells.some(([v])=>v==='ولد')){headerRow=n;for(const [key,title]of Object.entries(headers)){const match=cells.find(([v])=>v===normalize(title));if(match)columns[key]=match[1];}}});
- if(!columns.name||!columns.father)fail('ستون‌های اسم و ولد پیدا نشد؛ شماره ستون‌ها را مشخص کنید.');
- const rows=[];sheet.eachRow((row,n)=>{if(n<=headerRow)return;const r={sourceRow:n};for(const [k,i]of Object.entries(columns))r[k]=cellText(row.getCell(i));if(!r.name&&!r.father)return;if(['بااحترام','آمریت انسجام خدمات محصلان'].some(v=>(r.name||'').includes(v)))return;r.error=(!r.name||!r.father)?'اسم یا ولد خالی است.':'';rows.push(r);});return {rows,columns,headerRow};
+const ExcelJS = require("exceljs");
+const { normalize, fail } = require("./domain");
+const headers = {
+  name: "اسم",
+  father: "ولد",
+  department: "دیپارتمنت",
+  faculty: "پوهنځی",
+  semester: "سمستر",
+  province: "ولایت",
+  phone: "شماره تماس",
+  notes: "ملاحظات",
+  card: "شماره کارت محصلی",
+};
+const cellText = (c) => (c.value == null ? "" : String(c.text || "").trim());
+async function preview(buffer, mapping) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const sheet = wb.worksheets[0];
+  if (!sheet) fail("فایل خالی است.");
+  if (sheet.rowCount > 10000) fail("حداکثر ۱۰۰۰۰ سطر در یک فایل مجاز است.");
+  let headerRow = 0,
+    columns = {};
+  if (mapping) {
+    for (const k of Object.keys(headers))
+      if (mapping[k]) columns[k] = Number(mapping[k]);
+    headerRow = Number(mapping.headerRow) || 3;
+  } else
+    sheet.eachRow((row, n) => {
+      if (headerRow || n > 30) return;
+      const cells = [];
+      row.eachCell((c, i) => cells.push([normalize(cellText(c)), i]));
+      if (
+        cells.some(([v]) => v === "اسم") &&
+        cells.some(([v]) => v === "ولد")
+      ) {
+        headerRow = n;
+        for (const [key, title] of Object.entries(headers)) {
+          const match = cells.find(([v]) => v === normalize(title));
+          if (match) columns[key] = match[1];
+        }
+      }
+    });
+  if (!columns.name || !columns.father)
+    fail("ستون‌های اسم و ولد پیدا نشد؛ شماره ستون‌ها را مشخص کنید.");
+  const rows = [];
+  sheet.eachRow((row, n) => {
+    if (n <= headerRow) return;
+    const r = { sourceRow: n };
+    for (const [k, i] of Object.entries(columns))
+      r[k] = cellText(row.getCell(i));
+    if (!r.name && !r.father) return;
+    if (
+      ["بااحترام", "آمریت انسجام خدمات محصلان"].some((v) =>
+        (r.name || "").includes(v),
+      )
+    )
+      return;
+    r.error = !r.name || !r.father ? "اسم یا ولد خالی است." : "";
+    rows.push(r);
+  });
+  return { rows, columns, headerRow };
 }
-async function workbook(title,columns,rows){const wb=new ExcelJS.Workbook();const sh=wb.addWorksheet('گزارش',{views:[{rightToLeft:true}],pageSetup:{paperSize:9,orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0}});sh.mergeCells(1,1,1,columns.length);sh.getCell(1,1).value='پوهنتون کندوز — آمریت انسجام خدمات محصلان';sh.mergeCells(2,1,2,columns.length);sh.getCell(2,1).value=title;sh.addRow(columns);rows.forEach(r=>sh.addRow(r));sh.columns.forEach((c,i)=>c.width=i===0?9:24);sh.eachRow((r,n)=>{r.height=n<=3?28:24;r.eachCell(c=>{c.font={name:'Arial',size:12,bold:n<=3};c.alignment={horizontal:'center',vertical:'middle',wrapText:true};c.border={bottom:{style:'thin',color:{argb:'FFD5DDE3'}}};if(n===3)c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFE1ECE8'}};});});sh.pageSetup.printTitlesRow='1:3';return wb.xlsx.writeBuffer();}
-const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const faDate=v=>v?new Intl.DateTimeFormat('fa-AF',{timeZone:'Asia/Kabul',calendar:'persian'}).format(new Date(v+'T12:00:00Z')):'';
-function certificateHTML(certs,settings){return `<!doctype html><html lang="ps" dir="rtl"><meta charset="utf-8"><title>تصدیق‌نامه</title><link rel="stylesheet" href="/assets/fonts.css"><style>@page{size:A4 landscape;margin:10mm}body{font-family:Vazirmatn,Arial;background:#eee}article{box-sizing:border-box;width:277mm;min-height:185mm;margin:12px auto;background:white;border:7px double #536941;padding:9mm 15mm;text-align:center;page-break-after:always}header{display:flex;align-items:center;justify-content:space-between}header img{height:90px;width:90px;object-fit:contain}h1{font-size:32px;color:#526b3e}p.body{font-size:21px;line-height:2.5;text-align:justify}footer{display:flex;justify-content:space-between;margin-top:24px}small{display:block}button{padding:10px}@media print{body{background:white;margin:0}article{margin:0;page-break-inside:avoid}article:last-child{page-break-after:auto}button{display:none}}</style><button onclick="window.print()">چاپ / ذخیره PDF</button>${certs.map(c=>`<article><header><img src="/assets/logo1.jpg"><div>د افغانستان اسلامی امارت<br>د لوړو زده کړو وزارت<br>د کندوز پوهنتون ریاست<br>د محصلانو چارو معاونیت<br>د محصلانو خدمتونو انسجام آمریت</div><img src="/assets/logo2.jpg"></header><div style="display:flex;justify-content:space-between"><span>د ثبت ګڼه: ${esc(c.number)}</span><span>نېټه: ${faDate(c.issued)}</span></div><h1>تائید پاڼه</h1><p class="body">ښاغلی <b>${esc(c.studentName)}</b> د <b>${esc(c.father)}</b> زوی د (<b>${esc(c.courseName)}</b>) زدکړې ${esc(c.description||'کورس')} په بریالیتوب سره له ${faDate(c.start)} نېټې څخه تر ${faDate(c.end)} نېټې پورې بشپړ کړ. د دې تصدیق پاڼې ورکولو سره ورته د لوی څښتن تعالی له درباره د لا زیاتو بریالیتوبونو او پرمختګونو هیله کوو.</p><small>استاد: ${esc(c.teacherName)}</small><footer><div>${esc(settings.director)}<br>د محصلانو خدمتونو انسجام آمر<br><br>امضاء: __________________</div><div>${esc(settings.deputy)}<br>د محصلانو چارو معاون<br><br>امضاء: __________________</div></footer></article>`).join('')}</html>`;}
-module.exports={headers,preview,workbook,certificateHTML};
+async function workbook(title, columns, rows) {
+  const wb = new ExcelJS.Workbook();
+  const sh = wb.addWorksheet("گزارش", {
+    views: [{ rightToLeft: true }],
+    pageSetup: {
+      paperSize: 9,
+      orientation: "landscape",
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+    },
+  });
+  sh.mergeCells(1, 1, 1, columns.length);
+  sh.getCell(1, 1).value = "پوهنتون کندوز — آمریت انسجام خدمات محصلان";
+  sh.mergeCells(2, 1, 2, columns.length);
+  sh.getCell(2, 1).value = title;
+  sh.addRow(columns);
+  rows.forEach((r) => sh.addRow(r));
+  sh.columns.forEach((c, i) => (c.width = i === 0 ? 9 : 24));
+  sh.eachRow((r, n) => {
+    r.height = n <= 3 ? 28 : 24;
+    r.eachCell((c) => {
+      c.font = { name: "Arial", size: 12, bold: n <= 3 };
+      c.alignment = {
+        horizontal: "center",
+        vertical: "middle",
+        wrapText: true,
+      };
+      c.border = { bottom: { style: "thin", color: { argb: "FFD5DDE3" } } };
+      if (n === 3)
+        c.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFE1ECE8" },
+        };
+    });
+  });
+  sh.pageSetup.printTitlesRow = "1:3";
+  return wb.xlsx.writeBuffer();
+}
+
+module.exports = { headers, preview, workbook };
