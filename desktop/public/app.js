@@ -401,7 +401,41 @@ function people() {
     }</section>`
   );
 }
+function activityTabs() {
+  return `<div class="tabs">${[
+    ["seminars", "سمینارها"],
+    ["events", "ورکشاپ‌ها و برنامه‌های ویژه"],
+    ["internships", "کارآموزی"],
+  ]
+    .map(
+      ([id, t]) =>
+        `<button class="${activityTab === id ? "active" : ""}" data-action="activityTab" data-id="${id}">${t}</button>`,
+    )
+    .join("")}</div>`;
+}
+function activityExportQuery() {
+  return new URLSearchParams({
+    kind: activityTab,
+    search,
+    status: activityStatus,
+    from: activityFrom,
+    to: activityTo,
+    location: activityLocation,
+    type: activityType,
+    order: activityOrder,
+  }).toString();
+}
 function activities() {
+  if (activityTab === "internships")
+    return (
+      head(
+        "سمینارها و برنامه‌ها",
+        "ثبت و پیگیری فعالیت‌های آمریت انسجام خدمات محصلان",
+        button("＋ ثبت کارآموزی", "newActivity", "", "btn-primary"),
+      ) +
+      activityTabs() +
+      internshipsPanel()
+    );
   let rows = state[activityTab].filter(
     (r) =>
       (r.title + " " + r.presenter).includes(search) &&
@@ -422,17 +456,8 @@ function activities() {
       "ثبت و پیگیری فعالیت‌های آمریت انسجام خدمات محصلان",
       button("＋ ثبت فعالیت", "newActivity", "", "btn-primary"),
     ) +
-    `<div class="tabs">${[
-      ["seminars", "سمینارها"],
-      ["events", "ورکشاپ‌ها و برنامه‌های ویژه"],
-    ]
-      .map(
-        ([id, t]) =>
-          `<button class="${activityTab === id ? "active" : ""}" data-action="activityTab" data-id="${id}">${t}</button>`,
-      )
-      .join(
-        "",
-      )}</div><section class="panel"><div class="toolbar">${searchbox("جستجوی عنوان یا ارائه‌کننده…")}<select id="activityStatus" class="form-select"><option value="">همهٔ وضعیت‌ها</option>${["planned", "held", "cancelled"].map((s) => `<option value="${s}" ${s === activityStatus ? "selected" : ""}>${statuses[s]}</option>`).join("")}</select><input id="activityFrom" aria-label="از تاریخ" type="date" class="form-control" value="${activityFrom}"><input id="activityTo" aria-label="تا تاریخ" type="date" class="form-control" value="${activityTo}"><input id="activityLocation" class="form-control" placeholder="مکان" value="${esc(activityLocation)}">${activityTab === "events" ? `<select id="activityType" class="form-select"><option value="">همهٔ انواع</option>${eventTypes.map((t) => `<option value="${esc(t)}" ${t === activityType ? "selected" : ""}>${t}</option>`).join("")}</select>` : ""}<select id="activityOrder" class="form-select"><option value="desc" ${activityOrder === "desc" ? "selected" : ""}>جدیدتر نخست</option><option value="asc" ${activityOrder === "asc" ? "selected" : ""}>قدیمی‌تر نخست</option></select>${button("چاپ فهرست", "print")}</div><div class="printtitle"><h2>${activityTab === "seminars" ? "سمینارها" : "برنامه‌ها"}</h2>${date(activityFrom)} — ${date(activityTo)}</div>${
+    activityTabs() +
+    `<section class="panel"><div class="toolbar">${searchbox("جستجوی عنوان یا ارائه‌کننده…")}<select id="activityStatus" class="form-select"><option value="">همهٔ وضعیت‌ها</option>${["planned", "held", "cancelled"].map((s) => `<option value="${s}" ${s === activityStatus ? "selected" : ""}>${statuses[s]}</option>`).join("")}</select><input id="activityFrom" aria-label="از تاریخ" type="date" class="form-control" value="${activityFrom}"><input id="activityTo" aria-label="تا تاریخ" type="date" class="form-control" value="${activityTo}"><input id="activityLocation" class="form-control" placeholder="مکان" value="${esc(activityLocation)}">${activityTab === "events" ? `<select id="activityType" class="form-select"><option value="">همهٔ انواع</option>${eventTypes.map((t) => `<option value="${esc(t)}" ${t === activityType ? "selected" : ""}>${t}</option>`).join("")}</select>` : ""}<select id="activityOrder" class="form-select"><option value="desc" ${activityOrder === "desc" ? "selected" : ""}>جدیدتر نخست</option><option value="asc" ${activityOrder === "asc" ? "selected" : ""}>قدیمی‌تر نخست</option></select><a class="btn btn-outline-primary" href="/api/activities/export?${esc(activityExportQuery())}">دریافت Excel</a></div><div class="printtitle"><h2>${activityTab === "seminars" ? "سمینارها" : "برنامه‌ها"}</h2>${date(activityFrom)} — ${date(activityTo)}</div>${
       rows.length
         ? table(
             [
@@ -572,6 +597,7 @@ function schema(kind) {
       ["active", "حساب فعال", "checkbox"],
     ];
   if (kind === "students") return studentSchema;
+  if (kind === "internships") return internshipFields;
   return [
     ["title", "عنوان"],
     ...(kind === "events"
@@ -713,6 +739,12 @@ async function action(name, id, el) {
       peopleTab = id;
       search = "";
       render();
+      break;
+    case "internshipImport":
+      internshipImport();
+      break;
+    case "confirmInternshipImport":
+      await confirmInternshipImport(el);
       break;
     case "activityTab":
       activityTab = id;
@@ -961,6 +993,15 @@ document.addEventListener("submit", async (e) => {
       resultRows = preview.rows;
       resultProfile = preview.profile || "";
       showResults();
+    } else if (f.id === "internshipPreview") {
+      const data = new FormData();
+      data.append("file", f.querySelector("[name=file]").files[0]);
+      const preview = await api("/internships/preview", {
+        method: "POST",
+        body: data,
+      });
+      internshipRows = preview.rows;
+      showInternshipPreview();
     } else if (f.id === "importPreview") {
       const data = new FormData();
       data.append("file", f.querySelector("[name=file]").files[0]);

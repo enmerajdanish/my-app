@@ -214,6 +214,8 @@ async function saveEntity(s, user, kind, b, rowId) {
       )
     )
       fail("محصل با همین اسم و ولد قبلاً ثبت است؛ مشخصات را بررسی کنید.");
+  } else if (kind === "internships") {
+    return require("./internships").save(s, b, rowId);
   } else if (["seminars", "events"].includes(kind)) {
     data = {
       title: text(b.title, 200),

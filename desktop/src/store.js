@@ -10,6 +10,7 @@ const tables = [
   "certificates",
   "seminars",
   "events",
+  "internships",
   "settings",
   "sessions",
 ];

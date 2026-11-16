@@ -449,3 +449,178 @@ test("تعداد جلسات در فایل پنج‌ستونی داینامیک �
     });
   }
 });
+
+test("کارآموزی: مشخصات نمونه، ورود/خروج، تکراری، دسترسی و پشتیبان", async (t) => {
+  const I = require("../src/internships");
+  const f = await fixture(t);
+  const relogin = async () => {
+    let token = (await f.agent.get("/api/session")).body.csrf;
+    const result = await f.agent
+      .post("/api/login")
+      .set("X-CSRF-Token", token)
+      .send({ username: "admin", password: "Password12345" })
+      .expect(200);
+    token = result.body.csrf;
+    f.getCsrf = () => token;
+    f.post = (url, body, status = 200) =>
+      f.agent
+        .post("/api" + url)
+        .set("X-CSRF-Token", token)
+        .send(body)
+        .expect(status);
+  };
+  const row = {
+    name: "محصل نمونه",
+    father: "ولد نمونه",
+    department: "انگلیسی",
+    faculty: "تعلیم و تربیه",
+    semester: "هفتم",
+    referral: "مرجع نمونه",
+    internship: true,
+    practical: false,
+    teaching: true,
+    startSolar: "۱۴۰۵/۱۲/۱۴",
+    endSolar: "۱۴۰۵/۱۲/۱۵",
+  };
+  const created = (await f.post("/entity/internships", row)).body;
+  assert.equal(created.startSolar, "1405/12/14");
+  assert.equal(created.internship, true);
+  assert.equal(created.teaching, true);
+  await f.post("/entity/internships", row, 400);
+  await f.post(
+    "/entity/internships",
+    { ...row, startSolar: "1405/07/31" },
+    400,
+  );
+  await f.post("/entity/internships", { ...row, endSolar: "1405/12/01" }, 400);
+  await f.post("/entity/internships", { ...row, internship: "unknown" }, 400);
+  await f.post("/entity/internships/" + created.id, {
+    ...row,
+    semester: "هشتم",
+  });
+  const file = await binary(
+    f.agent,
+    "/api/internships/export?type=teaching&faculty=" +
+      encodeURIComponent(row.faculty),
+  );
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(file.body);
+  const sh = wb.worksheets[0];
+  assert.equal(sh.getImages().length, 2);
+  assert.equal(sh.getCell("G3").text, "مرجع معرفی شده");
+  assert.equal(sh.getCell("H4").text, "کارآموزی");
+  assert.equal(sh.getCell("I4").text, "");
+  assert.equal(sh.getCell("J4").text, "تدریس آموزی");
+  assert.equal(sh.getCell("K4").text, "1405/12/14");
+  assert.equal(sh.pageSetup.orientation, "landscape");
+  const preview = await I.preview(file.body);
+  assert.equal(preview.rows.length, 1);
+  assert.equal(preview.rows[0].semester, "هشتم");
+  assert.equal(preview.rows[0].error, "");
+  const uploaded = await f.agent
+    .post("/api/internships/preview")
+    .set("X-CSRF-Token", f.getCsrf())
+    .attach("file", file.body, "internships.xlsx")
+    .expect(200);
+  assert.equal(uploaded.body.rows.length, 1);
+  const result = (
+    await f.post("/internships/import", {
+      rows: [
+        { ...preview.rows[0] },
+        { ...row, name: "محصل دوم", sourceRow: 5 },
+        { ...row, name: "", sourceRow: 6 },
+      ],
+    })
+  ).body;
+  assert.equal(result.registered, 1);
+  assert.equal(result.errors.length, 2);
+  const backup = (await f.agent.get("/api/backup")).body;
+  assert.equal(backup.data.internships.length, 2);
+  const before = await f.store.load();
+  await f.post("/restore", backup);
+  await relogin();
+  const after = await f.store.load();
+  assert.deepEqual(after.internships, before.internships);
+  assert.deepEqual(after.students, before.students);
+  assert.deepEqual(after.courses, before.courses);
+  delete backup.data.internships;
+  await f.post("/restore", backup);
+  await relogin();
+  assert.deepEqual((await f.store.load()).internships, []);
+  f.store.db.exec("DROP TABLE internships");
+  await f.store.close();
+  const reopened = new Store();
+  await reopened.connect();
+  f.store.db = reopened.db;
+  assert.equal((await f.store.load()).users.length, 2);
+  assert.deepEqual((await f.store.load()).internships, []);
+  const teacher = request.agent(f.app);
+  let csrf = (await teacher.get("/api/session")).body.csrf;
+  const login = await teacher
+    .post("/api/login")
+    .set("X-CSRF-Token", csrf)
+    .send({ username: "teacher", password: "Password12345" })
+    .expect(200);
+  csrf = login.body.csrf;
+  assert.deepEqual((await teacher.get("/api/state")).body.internships, []);
+  await teacher.get("/api/internships/export").expect(403);
+  await teacher.get("/api/activities/export?kind=events").expect(403);
+  await teacher
+    .post("/api/internships/import")
+    .set("X-CSRF-Token", csrf)
+    .send({ rows: [row] })
+    .expect(403);
+  await f.post("/entity/internships", row);
+  const id = (await f.store.load()).internships[0].id;
+  await f.agent
+    .delete("/api/entity/internships/" + id)
+    .set("X-CSRF-Token", f.getCsrf())
+    .expect(200);
+  assert.deepEqual((await f.store.load()).internships, []);
+});
+test("Excel فعالیت‌ها: تمام مشخصات سمینار و ورکشاپ با فیلترهای فهرست", async (t) => {
+  const f = await fixture(t);
+  const row = {
+    title: "عنوان نمونه",
+    presenter: "ارائه‌کننده نمونه",
+    specialty: "تخصص نمونه",
+    topic: "موضوع نمونه",
+    organizer: "اداره نمونه",
+    coordinator: "مسئول نمونه",
+    date: "2026-11-16",
+    startTime: "10:00",
+    endTime: "11:00",
+    location: "تالار نمونه",
+    participants: 20,
+    description: "توضیح نمونه",
+    status: "held",
+    type: "ورکشاپ آموزشی",
+  };
+  await f.post("/entity/seminars", row);
+  await f.post("/entity/seminars", {
+    ...row,
+    title: "عنوان پنهان",
+    status: "planned",
+  });
+  await f.post("/entity/events", row);
+  for (const kind of ["seminars", "events"]) {
+    const file = await binary(
+      f.agent,
+      `/api/activities/export?kind=${kind}&status=held&location=${encodeURIComponent(row.location)}&search=${encodeURIComponent(row.title)}`,
+    );
+    assert.match(
+      file.headers["content-disposition"],
+      new RegExp(kind + "\\.xlsx"),
+    );
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(file.body);
+    const sh = wb.worksheets[0];
+    assert.equal(sh.rowCount, 4);
+    assert.equal(sh.columnCount, 15);
+    assert.equal(sh.getCell("B4").text, row.title);
+    assert.equal(sh.getCell("D4").text, row.presenter);
+    assert.equal(sh.getCell("O4").text, row.description);
+    assert.equal(sh.getCell("M4").value, 20);
+  }
+  await f.agent.get("/api/activities/export?kind=users").expect(400);
+});

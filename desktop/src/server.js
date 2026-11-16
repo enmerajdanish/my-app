@@ -11,6 +11,7 @@ const Word = require("./certificates-word");
 const { Store } = require("./store");
 const D = require("./domain");
 const Docs = require("./documents");
+const Internships = require("./internships");
 class DatabaseSessions extends session.Store {
   constructor(store) {
     super();
@@ -218,6 +219,7 @@ async function createApp(options = {}) {
       s.certificates = [];
       s.seminars = [];
       s.events = [];
+      s.internships = [];
       s.users = s.users.filter((x) => x.id === req.user.id);
     }
     res.json(s);
@@ -243,7 +245,16 @@ async function createApp(options = {}) {
   app.delete("/api/entity/:kind/:id", async (req, res) => {
     D.admin(req.user);
     const { kind, id } = req.params;
-    if (!["courses", "users", "students", "seminars", "events"].includes(kind))
+    if (
+      ![
+        "courses",
+        "users",
+        "students",
+        "seminars",
+        "events",
+        "internships",
+      ].includes(kind)
+    )
       D.fail("بخش نامعتبر است.");
     await store.run((s) => {
       if (!s[kind].some((x) => x.id === id)) D.fail("مورد پیدا نشد.", 404);
@@ -630,41 +641,124 @@ async function createApp(options = {}) {
       D.fail("فایل پشتیبان معتبر نیست.");
     await store.run((s) => {
       if (b.data.attendanceResults === undefined) b.data.attendanceResults = [];
+      if (b.data.internships === undefined) b.data.internships = [];
       validateBackup(b.data);
       for (const key of Object.keys(s))
         s[key] = key === "sessions" ? [] : b.data[key];
     });
     res.json({ ok: true });
   });
+  app.post(
+    "/api/internships/preview",
+    upload.single("file"),
+    async (req, res) => {
+      D.admin(req.user);
+      if (!req.file || !/\.xlsx$/i.test(req.file.originalname))
+        D.fail("فایل xlsx انتخاب کنید.");
+      res.json(await Internships.preview(req.file.buffer));
+    },
+  );
+  app.post("/api/internships/import", async (req, res) => {
+    D.admin(req.user);
+    const rows = req.body.rows;
+    if (!Array.isArray(rows) || !rows.length || rows.length > 10000)
+      D.fail("فهرست کارآموزی معتبر نیست.");
+    const result = await store.run((s) => {
+      const errors = [];
+      let registered = 0;
+      rows.forEach((row, i) => {
+        try {
+          Internships.save(s, row);
+          registered++;
+        } catch (e) {
+          if (!e.status) throw e;
+          errors.push({
+            row: row.sourceRow || i + 1,
+            name: D.text(row.name),
+            error: e.message,
+          });
+        }
+      });
+      return { identified: rows.length, registered, errors };
+    });
+    res.json(result);
+  });
+  app.get("/api/internships/export", async (req, res) => {
+    D.admin(req.user);
+    const rows = Internships.filter(req.state.internships, req.query);
+    const b = await Internships.workbook(rows, req.state.settings[0]);
+    res
+      .set({
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": 'attachment; filename="internships.xlsx"',
+      })
+      .send(Buffer.from(b));
+  });
   app.get("/api/activities/export", async (req, res) => {
     D.admin(req.user);
-    const kind = req.query.kind === "seminars" ? "seminars" : "events";
+    const q = req.query;
+    const kind = q.kind || "seminars";
+    if (!["seminars", "events"].includes(kind)) D.fail("بخش نامعتبر است.");
     const rows = req.state[kind]
       .filter(
         (x) =>
-          (!req.query.from || x.date >= req.query.from) &&
-          (!req.query.to || x.date <= req.query.to),
+          (!q.from || x.date >= q.from) &&
+          (!q.to || x.date <= q.to) &&
+          (!q.status || x.status === q.status) &&
+          (!q.location || (x.location || "").includes(q.location)) &&
+          (!q.type || x.type === q.type) &&
+          (!q.search || (x.title + " " + x.presenter).includes(q.search)),
       )
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort((a, b) =>
+        q.order === "asc"
+          ? a.date.localeCompare(b.date)
+          : b.date.localeCompare(a.date),
+      );
     const b = await Docs.workbook(
-      kind === "seminars" ? "سمینارها" : "برنامه‌ها",
-      ["عنوان", "تاریخ", "مکان", "برگزارکننده", "تعداد", "وضعیت"],
-      rows.map((x) => [
+      kind === "seminars" ? "سمینارها" : "ورکشاپ‌ها و برنامه‌های ویژه",
+      [
+        "شماره",
+        "عنوان",
+        "نوع برنامه",
+        "نام ارائه‌کننده",
+        "عنوان وظیفه / تخصص",
+        "موضوع یا هدف",
+        "برگزارکننده",
+        "مسئول / هماهنگ‌کننده",
+        "تاریخ",
+        "ساعت شروع",
+        "ساعت ختم",
+        "مکان",
+        "تعداد اشتراک‌کنندگان",
+        "وضعیت",
+        "توضیحات",
+      ],
+      rows.map((x, i) => [
+        i + 1,
         x.title,
-        DocsDate(x.date),
-        x.location,
+        kind === "seminars" ? "سمینار" : x.type,
+        x.presenter,
+        x.specialty,
+        x.topic,
         x.organizer,
+        x.coordinator,
+        DocsDate(x.date),
+        x.startTime,
+        x.endTime,
+        x.location,
         x.participants,
         { planned: "برنامه‌ریزی‌شده", held: "برگزارشده", cancelled: "لغوشده" }[
           x.status
         ],
+        x.description,
       ]),
     );
     res
       .set({
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": 'attachment; filename="activities.xlsx"',
+        "Content-Disposition": `attachment; filename="${kind}.xlsx"`,
       })
       .send(Buffer.from(b));
   });
@@ -739,6 +833,9 @@ function validateBackup(s) {
     !["light", "dark", "system"].includes(s.settings[0].theme)
   )
     D.fail("تنظیمات پشتیبان معتبر نیست.");
+  for (const r of s.internships) Object.assign(r, Internships.data(r));
+  if (new Set(s.internships.map(Internships.key)).size !== s.internships.length)
+    D.fail("اطلاعات تکراری در پشتیبان است.");
   for (const c of s.courses) {
     if (
       !s.users.some((u) => u.id === c.teacherId) ||
