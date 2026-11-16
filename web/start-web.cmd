@@ -1,18 +1,16 @@
 @echo off
 cd /d "%~dp0"
-if exist node_modules goto database
+where node >nul 2>nul
+if errorlevel 1 goto fail
+if exist node_modules\nodemon\bin\nodemon.js goto run
 call npm ci
 if errorlevel 1 goto fail
-:database
-docker compose up -d --wait
+:run
+call npm run dev
 if errorlevel 1 goto fail
-call npm run setup
-if errorlevel 1 goto fail
-start "" http://127.0.0.1:3000
-call npm start
 pause
 exit /b
 :fail
-echo Setup failed. Check Node.js 24 and Docker Desktop, then retry.
+echo Start failed. Check Node.js 24, MongoDB Community Server, and the error above.
 pause
 exit /b 1

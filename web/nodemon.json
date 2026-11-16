@@ -1,0 +1,7 @@
+{
+  "watch": ["src", "public", ".env"],
+  "ext": "js,json,html,css,env",
+  "ignore": ["data/**", "backups/**", "node_modules/**", "samples/**"],
+  "delay": "500",
+  "exec": "node src/server.js"
+}
